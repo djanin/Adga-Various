@@ -218,11 +218,16 @@ bindReturnMapF f (impure (ext s pf))
     
 -- * Monadic list
 
+-- here our definition of lists slitghly differs form [I] for the monad only embeds the future of the list
+
 -- ** Definition
 
 data List {F : Set l -> Set l}  (CF : Container F) (A : Set l) : Set l where
   nil : List  CF A
   cons : A -> Free CF (List CF A) -> List  CF A
+
+FreeList : ∀  {F : Set l -> Set l}  (CF : Container F) (A : Set l) -> Set l
+FreeList CF A = Free CF (List CF A)
 
 
 -- ** Monad lists monoid
@@ -288,9 +293,7 @@ mapL : ∀ {F CF A B} ->  (A -> B) -> List {F} CF A -> List {F} CF B
 mapLF :  ∀ {F CF A B} ->  (A -> B) -> Free {F} CF (List CF A) -> Free {F} CF (List CF B)
 
 mapL f nil = nil
-mapL f (cons x (pure l)) = cons (f x) (pure (mapL f l))
-mapL f (cons x (impure (ext s p))) = cons (f x)
-    (impure (ext s (λ c ->  mapLF f (p c))))
+mapL f (cons x m) = cons (f x) (mapLF f m)
 
 mapLF f (pure l) = pure (mapL f l)
 mapLF f (impure (ext s p)) = impure (ext s (λ c -> mapLF f (p c)))
@@ -303,9 +306,7 @@ module isFunctorMapList where
   mapIdF :  ∀ {F CF} -> MapId {λ A -> Free {F} CF (List CF A)} mapLF
   
   mapId nil = refl
-  mapId (cons x (pure l)) = cong (λ l -> cons x (pure l)) (mapId l)
-  mapId (cons x (impure (ext s pf)))
-     = cong (λ p -> cons x (impure (ext s p))) (funext (λ c -> mapIdF (pf c)))
+  mapId (cons x m) = cong (cons x) (mapIdF m)
 
   mapIdF (pure l) = cong pure (mapId l)
   mapIdF (impure (ext s pf))
@@ -315,15 +316,24 @@ module isFunctorMapList where
   mapComposeF :  ∀ {F CF} -> MapCompose {λ A -> Free {F} CF (List CF A)} mapLF
   
   mapCompose nil = refl
-  mapCompose {f = f} {g = g} (cons x (pure l))
-     =  cong (λ l -> cons ((g ∘ f) x) (pure l)) (mapCompose l)
-  mapCompose {f = f} {g = g} (cons x (impure (ext s pf)))
-    = cong (λ p -> cons (g(f(x))) $ impure (ext s p))
-       (funext (λ c -> mapComposeF (pf c)))
+  mapCompose {f = f} {g = g} (cons x m)
+     =  cong (cons ((g ∘ f) x)) (mapComposeF m)
 
   mapComposeF (pure l) = cong pure (mapCompose l)
   mapComposeF (impure (ext s pf))
     =  cong (λ p -> impure (ext s p)) (funext (λ c -> mapComposeF (pf c)))
+
+-- ** Monad list fold
+
+foldL :  ∀ {F}{CF : Container F}{A B} -> (A -> B -> B) ->  B -> List CF A -> Free CF B
+
+foldLF :  ∀ {F}{CF : Container F}{A B} -> (A -> B -> B) -> B -> Free CF (List CF A) -> Free CF B
+
+foldL f b nil = pure b
+foldL f b (cons x m) = foldLF f (f x b) m
+
+foldLF f b (pure xs) = foldL f b xs
+foldLF f b (impure (ext s p)) = impure (ext s (λ c -> foldLF f b (p c)))
 
 -- * Monadic stream
 
@@ -331,7 +341,7 @@ module isFunctorMapList where
 
 
 Next : ∀ {F} {CF : Container F} -> (H : Set l -> Set l) -> (A : Set l)  -> Set l
-Next {CF = CF} H A = Free CF (A × H A)
+Next {CF = CF} H A = Free CF (Maybe (A × H A))
 
 data Stream {F : Set l -> Set l} (CF : Container F) (A : Set l) : Set l where
   next : Next {F} {CF} (Stream CF) A -> Stream {F} CF A
@@ -340,13 +350,12 @@ data Stream {F : Set l -> Set l} (CF : Container F) (A : Set l) : Set l where
 
 
 appendS : ∀ {F} {CF : Container F} {A} -> Stream CF A -> Stream CF A -> Stream CF A
-appendSF : ∀ {F} {CF : Container F} {A} -> Free CF (A × Stream CF A) -> Stream CF A
-  -> Free CF (A × Stream CF A)
+appendSF : ∀ {F} {CF : Container F} {A} -> Free CF (Maybe(A × Stream CF A)) -> Stream CF A
+  -> Free CF (Maybe(A × Stream CF A))
 
-appendS (next (pure (a , s1))) s2 = (next ∘ pure) (a , appendS s1 s2)
-appendS (next (impure (ext s pf))) s2 = (next ∘ impure) (ext s (λ c -> appendSF (pf c) s2))
-
-appendSF (pure (a , m1)) m = pure (a , appendS m1 m)
+appendS (next m) s2 = next (appendSF m s2)
+appendSF (pure nothing) m = pure nothing
+appendSF (pure (just(a , m1))) m = pure (just (a , appendS m1 m))
 appendSF (impure (ext s pf)) m = impure (ext s (λ  c -> appendSF (pf c) m))
 
 
@@ -358,57 +367,94 @@ module isSemigroup where
   -- (l1 l2  l3 : Stream CF A) ->
   --   appendS l1 (appendS l2 l3) ≡ appendS (appendS l1 l2) l3
   assocF : ∀ {F}{CF : Container F} ->
-    AssocF {λ A -> Free CF (A × Stream CF A)} {Stream CF} appendSF appendS
+    AssocF {λ A -> Free CF (Maybe(A × Stream CF A))} {Stream CF} appendSF appendS
   -- (m : Free CF (A × Stream CF A)) -> (l2  l3 : Stream CF A)
   --  -> appendSF m (appendS l2 l3) ≡ appendSF (appendSF m l2) l3
 
-  assoc (next (pure (a , l))) l2 l3
-    =  cong (λ l -> next(pure (a , l))) (assoc l l2 l3)
-  assoc (next (impure (ext s pf))) l2 l3
-    = cong (λ p -> next(impure (ext s p))) (funext (λ c -> assocF (pf c) l2 l3))
+  assoc (next m) s2 s3 = cong next (assocF m s2 s3)
     
-  assocF (pure (a , l)) l2 l3 = cong (λ l -> pure (a , l)) (assoc l l2 l3)
+  assocF (pure nothing) l2 l3 = refl
+  assocF (pure (just (a , l))) l2 l3 = cong (λ l -> pure (just (a , l))) (assoc l l2 l3)
   assocF (impure (ext s pf)) l2 l3
         = cong (λ p -> impure (ext s p)) (funext (λ c -> assocF (pf c) l2 l3))
 
 
 mapS : ∀ {F CF A B} -> (A -> B) -> Stream {F} CF A -> Stream CF B
-mapSF : ∀ {F CF A B} -> (A -> B) -> Free {F} CF (A × Stream CF A)
-    -> Free {F} CF (B × Stream CF B)
+mapSF : ∀ {F CF A B} -> (A -> B) -> Free {F} CF (Maybe(A × Stream CF A))
+    -> Free {F} CF (Maybe(B × Stream CF B))
 
-mapS f (next (pure (fst , snd))) = next (pure (f fst ,  mapS f snd))
-mapS f (next (impure (ext s pf)))
-   =  next (impure (ext s (λ c -> mapSF f (pf c))))
+mapS f (next m) = next (mapSF f m)
 
-mapSF f (pure (fst , snd)) = pure (f fst , mapS f snd)
+mapSF f (pure nothing) = pure nothing
+mapSF f (pure (just(x , xs))) = pure (just (f x , mapS f xs))
 mapSF f (impure (ext s pf)) =  impure (ext s (λ  c -> mapSF f (pf c))) 
 
 module isFunctorMapStream where
   mapId :  ∀ {F CF} -> MapId {Stream {F} CF} mapS
-  mapIdF :  ∀ {F CF} -> MapId {λ A -> Free {F} CF (A × Stream CF A)} mapSF
-  
-  mapId (next (pure (a , l))) = cong (λ l -> next (pure (a ,  l))) (mapId l)
-  mapId (next (impure (ext s pf)))
-     = cong (λ p -> next (impure (ext s p))) (funext (λ c -> mapIdF (pf c)))
+  mapIdF :  ∀ {F CF} -> MapId {λ A -> Free {F} CF (Maybe(A × Stream CF A))} mapSF
 
-  mapIdF (pure (a , l)) =  cong (λ l -> pure (a , l)) (mapId l)
+  mapId (next m) = cong next (mapIdF m)
+
+  mapIdF (pure nothing) = refl
+  mapIdF (pure (just (a , l))) =  cong (λ l -> pure (just (a , l))) (mapId l)
   mapIdF (impure (ext s pf))
     = cong (λ p -> impure (ext s p)) (funext (λ c -> mapIdF (pf c)))
 
   mapCompose :  ∀ {F CF} -> MapCompose {Stream {F} CF} mapS
-  mapComposeF :  ∀ {F CF} -> MapCompose {λ A -> Free {F} CF (A × Stream CF A)} mapSF
-  
-  mapCompose {f = f} {g = g} (next (pure (x , l)))
-    =  cong (λ l -> next (pure $ (g ∘ f) x , l)) (mapCompose l)
-  mapCompose  (next (impure (ext s pf)))
-    = cong (λ p -> next(impure (ext s p))) (funext (λ c -> mapComposeF (pf c)))
+  mapComposeF :  ∀ {F CF} -> MapCompose {λ A -> Free {F} CF (Maybe(A × Stream CF A))} mapSF
 
-  mapComposeF {f = f} {g = g} (pure (a , l))
-     = cong (λ l -> pure (g (f(a)) , l) ) (mapCompose l)
+  mapCompose (next m) = cong next (mapComposeF m)
+  
+  mapComposeF {f = f} {g = g} (pure nothing) = refl
+  mapComposeF {f = f} {g = g} (pure (just (a , l)))
+     = cong (λ l -> (pure ∘ just) (g (f(a)) , l) ) (mapCompose l)
   mapComposeF (impure (ext s pf))
     =  cong (λ p -> impure (ext s p)) (funext (λ c -> mapComposeF (pf c)))
 
--- ** Monad folding (quite a mindless translation of [I])
+-- * Equivalence between monad streams and free lists
+
+toFreeList : ∀ {F} {CF : Container F} {A} -> Stream CF A -> FreeList CF A
+toFreeListF : ∀ {F} {CF : Container F} {A} -> Free CF (Maybe(A × Stream CF A)) -> FreeList CF A
+
+toFreeList (next m) = toFreeListF m
+
+toFreeListF (pure nothing) = pure nil
+toFreeListF (pure (just (x , xs))) = pure (cons x (toFreeList xs))
+toFreeListF (impure (ext s p)) = impure  (ext s (λ c -> toFreeListF (p c)))
+
+
+toStream : ∀ {F} {CF : Container F} {A} -> FreeList CF A  -> Stream CF A
+toStreamF : ∀ {F} {CF : Container F} {A} -> FreeList CF A  -> Free CF (Maybe (A × Stream CF A))
+
+toStream m = next (toStreamF m)
+
+toStreamF (pure nil) = pure nothing
+toStreamF (pure (cons x xs)) = pure (just (x , toStream xs))
+toStreamF (impure (ext s p)) = impure (ext s (λ c -> toStreamF (p c)))
+
+-- the two functions are inverse one another
+
+fromStreamToStream : ∀ {F} {CF : Container F} {A} -> (l : Stream CF A) ->
+      (toStream ∘ toFreeList) l ≡ l
+
+fromStreamToStreamF : ∀ {F} {CF : Container F} {A} -> (m : Free CF (Maybe(A × Stream CF A))) ->
+      (toStreamF ∘ toFreeListF) m ≡ m
+
+fromStreamToStream (next m) = cong next (fromStreamToStreamF m)
+fromStreamToStreamF (pure nothing) = refl
+fromStreamToStreamF (pure (just (x , xs))) = cong (λ xs -> pure (just (x , xs))) (fromStreamToStream xs)
+fromStreamToStreamF (impure (ext s p))
+  = cong (λ p -> impure (ext s p)) (funext (λ c -> fromStreamToStreamF (p c)))
+
+fromFreeListToFreeList :  ∀ {F} {CF : Container F} {A} -> (l : FreeList CF A) ->
+      (toFreeList ∘  toStream) l ≡ l
+
+fromFreeListToFreeList (pure nil) = refl
+fromFreeListToFreeList (pure (cons x xs)) = cong (λ xs -> pure (cons x xs)) (fromFreeListToFreeList xs)
+fromFreeListToFreeList (impure (ext s p))
+  = cong (λ p -> impure (ext s p)) (funext (λ c -> fromFreeListToFreeList (p c)))
+
+-- * Folding (quite a mindless translation of [I])
 
 foldF :  ∀ {A B : Set l} {F : Set l -> Set l} {CF : Container F}
   -> (A -> B) -> (F B  -> B) -> Free {F} CF A -> B
@@ -446,3 +492,4 @@ joinMaybe (just (just x)) = just x
 
 free-to-maybe : (A : Set l) -> (Free COne A) -> Maybe A
 free-to-maybe A m = induce (just) (joinMaybe) A one-to-maybe m
+
