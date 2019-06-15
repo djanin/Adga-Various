@@ -21,7 +21,9 @@
 --
 -- copyright : David Janin, LaBRI, Bordeaux INP, Bordeaux University, june 2019
 
-module Mona where
+open import Level
+
+module Mona {l : Level} where
 
 
 open import Relation.Binary.PropositionalEquality
@@ -32,7 +34,7 @@ open import Axiom.Extensionality.Propositional as Extensionality
 open import Data.Maybe
 open import Data.Product
 
-open import Properties
+open import Properties {l}
 
 -- open import Relation.Binary.EqReasoning
 -- open import Size
@@ -40,22 +42,22 @@ open import Properties
 
 postulate funext : ∀ {a b} -> Extensionality.Extensionality a b
 
-data ⊥ : Set  where
+data ⊥ : Set l  where
 
-data ⊤ : Set where
+data ⊤ : Set l where
   tt : ⊤
 
 -- * Containers and extensions
 
 -- ** Definitions
 
-data Const (B A : Set) : Set where
+data Const (B A : Set l) : Set l where
   cont : B -> Const B A
 
-data Ext {l} (Shape : Set l) (Pos : Shape → Set l) (A : Set l) : Set l where
+data Ext (Shape : Set l) (Pos : Shape → Set l) (A : Set l) : Set l where
    ext : (s : Shape) -> (Pos s -> A) → Ext Shape Pos A
 
-record Container {l} (F : Set l -> Set l) : Set (lsuc l) where
+record Container (F : Set l -> Set l) : Set (suc l) where
   field
     Shape : Set l
     Pos : Shape -> Set l
@@ -64,13 +66,14 @@ record Container {l} (F : Set l -> Set l) : Set (lsuc l) where
     toFrom : ∀ {A : Set l} -> (fx : F A) -> to(from fx) ≡ fx
     fromTo : ∀ {A : Set l} -> (e : Ext Shape Pos A) -> from(to e) ≡ e
 
+open Container
 
 -- ** Instance examples
 
 module CZero where
   open Container
 
-  Zero : Set -> Set
+  Zero : Set l -> Set l
   Zero A = ⊥
 
 
@@ -85,18 +88,18 @@ module CZero where
       fromTo = fromToZero
       }
      where
-       toZero : ∀ {A : Set} → Ext ⊥ (λ ()) A → Zero A
+       toZero : ∀ {A : Set l} → Ext ⊥ (λ ()) A → Zero A
        toZero (ext () _)
-       fromZero : ∀ {A : Set} → Zero A → Ext ⊥ (λ ()) A
+       fromZero : ∀ {A : Set l} → Zero A → Ext ⊥ (λ ()) A
        fromZero ()
-       fromToZero : ∀ {A : Set} (e : Ext ⊥ (λ ()) A) → fromZero (toZero e) ≡ e
+       fromToZero : ∀ {A : Set l} (e : Ext ⊥ (λ ()) A) → fromZero (toZero e) ≡ e
        fromToZero (ext () _)
       
 
 module COne where
   open Container
 
-  One : Set -> Set
+  One : Set l -> Set l
   One A = ⊤
 
 
@@ -121,22 +124,24 @@ module COne where
 
 -- ** Definition
 
-data Free {F : Set -> Set} (CF : Container F) (A : Set) : Set where
+data Free {F : Set l -> Set l} (CF : Container F) (A : Set l) : Set l where
  pure : A -> Free CF A
  impure : Ext (Container.Shape CF) (Container.Pos CF) (Free CF A) -> Free CF A
+
+
 
 -- ** Example
 
 module MaybeF where
   open COne
 
-  MaybeF : (A : Set) -> Set
+  MaybeF : (A : Set l) -> Set l
   MaybeF A =  Free COne A
 
-  NothingF : ∀ {A : Set} -> MaybeF A
+  NothingF : ∀ {A : Set l} -> MaybeF A
   NothingF {A} = impure (ext tt (λ ()))
   
-  JustF : ∀ {A : Set} -> A -> MaybeF A
+  JustF : ∀ {A : Set l} -> A -> MaybeF A
   JustF x = pure x
 
 
@@ -155,7 +160,7 @@ joinF (impure (ext s pf)) = impure (ext s (λ c -> joinF (pf c)))
 returnF : ∀ {F CF} -> Return (Free {F} CF) -- A -> Free {F} CF A
 returnF x = pure x
 
-bindF :  ∀ {F : Set -> Set} {CF : Container F} 
+bindF :  ∀ {F : Set l -> Set l} {CF : Container F} 
   -> Bind (Free {F} CF)  --  ->  Free {F} CF A -> (A -> Free {F} CF B) -> Free {F} CF B
 bindF (pure x) f = f x
 bindF (impure (ext s pf)) f = impure (ext s (λ c -> bindF (pf c) f))
@@ -215,15 +220,17 @@ bindReturnMapF f (impure (ext s pf))
 
 -- ** Definition
 
-data List {F : Set -> Set}  (CF : Container F) (A : Set) : Set where
+data List {F : Set l -> Set l}  (CF : Container F) (A : Set l) : Set l where
   nil : List  CF A
   cons : A -> Free CF (List CF A) -> List  CF A
 
 
 -- ** Monad lists monoid
 
-append : ∀ {F CF} ->  Op (List {F} CF) -- List {F} CF A -> List {F} CF A -> List CF A
-appendF : ∀ {F CF} ->  OpF (Free {F} CF ∘ List {F} CF) (List {F} CF) -- Free {F} CF (List CF A) -> List CF A  -> Free CF (List CF A)
+append : ∀ {F CF} ->  Op (List {F} CF)
+  -- List {F} CF A -> List {F} CF A -> List CF A
+appendF : ∀ {F CF} ->  OpF (Free {F} CF ∘ List {F} CF) (List {F} CF)
+  -- Free {F} CF (List CF A) -> List CF A  -> Free CF (List CF A)
 
 append nil l2 = l2
 append (cons x (pure l)) l2 = cons x (pure (append l l2))
@@ -323,10 +330,10 @@ module isFunctorMapList where
 -- In monadic stream, it is the monadic action that may tell if a stream is over or not.
 
 
-Next : ∀ {F} {CF : Container F} -> (H : Set -> Set) -> (A : Set)  -> Set
+Next : ∀ {F} {CF : Container F} -> (H : Set l -> Set l) -> (A : Set l)  -> Set l
 Next {CF = CF} H A = Free CF (A × H A)
 
-data Stream {F : Set -> Set} (CF : Container F) (A : Set) : Set where
+data Stream {F : Set l -> Set l} (CF : Container F) (A : Set l) : Set l where
   next : Next {F} {CF} (Stream CF) A -> Stream {F} CF A
 
 -- ** Induced uniform semigroup
@@ -403,39 +410,39 @@ module isFunctorMapStream where
 
 -- ** Monad folding (quite a mindless translation of [I])
 
-foldF :  ∀ {A B : Set} {F : Set -> Set} {CF : Container F}
+foldF :  ∀ {A B : Set l} {F : Set l -> Set l} {CF : Container F}
   -> (A -> B) -> (F B  -> B) -> Free {F} CF A -> B
 foldF f g (pure x) = f x
 foldF {CF = CF} f g (impure (ext s pf))
   = g (Container.to CF (ext s (λ c -> (foldF f g) (pf c))))
 
-induce : ∀ {M F : Set -> Set} {CF : Container F} ->
-   Return M -> Join M -> (A : Set) -> (f : (X : Set) -> F X → M X) -> Free CF A  -> M A
+induce : ∀ {M F : Set l -> Set l} {CF : Container F} ->
+   Return M -> Join M -> (A : Set l) -> (f : (X : Set l) -> F X → M X) -> Free CF A  -> M A
 induce {M} {F} return join A f m
   = foldF return (λ x -> join (f (M A) x)) m
 
-Id : Set -> Set
+Id : Set l -> Set l
 Id A = A
 
 open CZero
 
-zero-to-id : (A : Set) -> Zero A -> Id A
+zero-to-id : (A : Set l) -> Zero A -> Id A
 zero-to-id A ()
 
 
-free-to-id : (A : Set) -> (Free CZero A) -> Id A
+free-to-id : (A : Set l) -> (Free CZero A) -> Id A
 free-to-id A m = induce id id A zero-to-id m
 
 open COne
 
-one-to-maybe : (A : Set) -> One A -> Maybe A
+one-to-maybe : (A : Set l) -> One A -> Maybe A
 one-to-maybe A _ = nothing
 
 
-joinMaybe : ∀ {A : Set} -> Maybe (Maybe A) -> Maybe A
+joinMaybe : ∀ {A : Set l} -> Maybe (Maybe A) -> Maybe A
 joinMaybe nothing = nothing
 joinMaybe (just nothing) = nothing
 joinMaybe (just (just x)) = just x
 
-free-to-maybe : (A : Set) -> (Free COne A) -> Maybe A
+free-to-maybe : (A : Set l) -> (Free COne A) -> Maybe A
 free-to-maybe A m = induce (just) (joinMaybe) A one-to-maybe m
